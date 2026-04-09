@@ -14,8 +14,8 @@ You can find aditionnal plugins or other resources on the [galette-community org
 
 [Galette](https://galette.eu) est une application web open source de gestion des adhérents et des cotisations, spécialement conçue pour les organisations à but non lucratif.
 
-Les sources de Galette (le cœur du logiciel) ainsi que les extensions officielles sont disponibles ici ! Vous y trouverez également, entre autres, la documentation et le code source du site web.
-D'autres extensions et ressources complémentaires sont accessibles sur [l'organisation galette-community](https://github.com/galette-community).
+Les sources de Galette (le cœur du logiciel) ainsi que les plugins officiels sont disponibles ici ! Vous y trouverez également, entre autres, la documentation et le code source du site web.
+D'autres plugins et ressources complémentaires sont accessibles sur [l'organisation galette-community](https://github.com/galette-community).
 
 [Restons en contact !](https://galette.eu/site/fr/contact/)
 
