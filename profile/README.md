@@ -8,7 +8,7 @@
 Sources for Galette itself (core) and official plugins are available here! You can also find documentation or website sources, among other.
 You can find aditionnal plugins or other resources on the [galette-community organization](https://github.com/galette-community).
 
-[Keep in touh!](https://galette.eu/site/contact/)
+[Keep in touch!](https://galette.eu/site/contact/)
 
 ## Libérez la gestion de votre association !
 
