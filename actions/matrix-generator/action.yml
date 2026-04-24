@@ -4,6 +4,9 @@ inputs:
   target:
     description: 'What to taget (phpunit, e2e, lint)'
     default: 'phpunit'
+  all-jobs:
+    description: 'Run all jobs'
+    default: 'false's
 
 outputs:
   matrix:
