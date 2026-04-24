@@ -42,12 +42,14 @@ runs:
           "export MYSQL_UNSUPPORTED=\(.mysql_unsupported)",
           "export MARIADB_UNSUPPORTED=\(.mariadb_unsupported)"
         ' "$VERSIONS_FILE")"
-        MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments)')
-        if [[ "${{ inputs.all-jobs }}" == "true" ]]; then
-          MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments)')
-        else
-          MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments) | .include |= map(select(.always == true))')
-        fi
+        MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c \
+          --arg all "${{ inputs.all-jobs }}" \
+          'del(._comments) |
+           if $all == "true" then
+             .
+           else
+             .include |= map(select(.always != false))
+           end')
         echo "Generated matrix:"
         echo "$MATRIX" | jq .
         echo "matrix<<EOF" >> $GITHUB_OUTPUT
