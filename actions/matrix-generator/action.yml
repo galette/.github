@@ -18,7 +18,7 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
       run: |
-        MATRIX_FILE=".github/actions/matrix-generator/matrix-${TARGET}.json"
+        MATRIX_FILE="${{ github.action_path }}/matrix-${TARGET}.json"
         if [[ -f ".github/galette.json" ]]; then
           echo "Working with specific provided versions"
           VERSIONS_FILE=".github/galette.json"
