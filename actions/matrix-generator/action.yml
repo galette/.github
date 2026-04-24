@@ -1,0 +1,47 @@
+name: 'Galette Matrix Generator'
+description: 'Generate PHP matrix for a standard usage'
+inputs:
+  target:
+    description: 'What to taget (phpunit, e2e, lint)'
+    default: 'phpunit'
+
+outputs:
+  matrix:
+    description: "Generated matrix"
+    value: ${{ steps.set-matrix.outputs.matrix }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: set-matrix
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        MATRIX_FILE=".github/actions/matrix-generator/matrix-${TARGET}.json"
+        if [[ -f ".github/galette.json" ]]; then
+          echo "Working with specific provided versions"
+          VERSIONS_FILE=".github/galette.json"
+        else
+          VERSIONS_FILE="${{ github.action_path }}/versions.json"
+        fi
+        eval "$(jq -r '
+          ._versions |
+          "export PHP_MIN=\(.php_min)",
+          "export PHP_MAX=\(.php_max)",
+          "export PGSQL_MIN=\(.pgsql_min)",
+          "export PGSQL_MAX=\(.pgsql_max)",
+          "export MYSQL_MIN=\(.mysql_min)",
+          "export MYSQL_MAX=\(.mysql_max)",
+          "export MARIADB_MIN=\(.mariadb_min)",
+          "export MARIADB_MAX=\(.mariadb_max)",
+          "export PGSQL_UNSUPPORTED=\(.pgsql_unsupported)",
+          "export MYSQL_UNSUPPORTED=\(.mysql_unsupported)",
+          "export MARIADB_UNSUPPORTED=\(.mariadb_unsupported)"
+        ' "$VERSIONS_FILE")"
+        MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments)')
+        echo "Generated matrix:"
+        echo "$MATRIX" | jq .
+        echo "matrix<<EOF" >> $GITHUB_OUTPUT
+        echo "$MATRIX" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT

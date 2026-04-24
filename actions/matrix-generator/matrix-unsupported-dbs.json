@@ -1,0 +1,14 @@
+{
+  "_comments": [
+    "GithuAction matrix for Galette unsupported databases tests.",
+    "Rules to follow:",
+    "- test against maxium PHP version",
+    "- always test on one version"
+  ],
+  "include": [
+    { "php-version": "${PHP_MAX}", "db-image": "postgres:${PSQL_UNSUPPORTED}", "always": true},
+    { "php-version": "${PHP_MAX}", "db-image": "mysql:${MYSQL_UNSUPPORTED}", "always": false},
+    { "php-version": "${PHP_MAX}", "db-image": "mariadb:${MARIADB_UNSUPPORTED}", "always": false}
+  ]
+}
+

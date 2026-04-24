@@ -1,0 +1,15 @@
+{
+  "_comments": [
+    "GithuAction matrix for Galette lint checks.",
+    "Rules to follow:",
+    "- always lint on higher and lower stable PHP versions",
+    "- enable coverage on higher stable PHP version with higher PostgreSQL version",
+    "- cache must be disabled on one always enabled build (not coverage one, this already takes much time than others)",
+    "- always one test with lower PHP version"
+  ],
+  "include": [
+    { "php-version": "${PHP_MIN}" },
+    { "php-version": "${PHP_MAX}" }
+  ]
+}
+

@@ -1,0 +1,25 @@
+{
+  "_comments": [
+    "GithuAction matrix for Galette PHPUnit tests.",
+    "Rules to follow:",
+    "- always test higher stable PHP version with lower database version",
+    "- enable coverage on higher stable PHP version with higher PostgreSQL version",
+    "- cache must be disabled on one always enabled build (not coverage one, this already takes much time than others)",
+    "- always one test with lower PHP version"
+  ],
+  "include": [
+    { "php-version": "${PHP_MAX}", "db-image": "postgres:${PGSQL_MIN}", "coverage": "none", "cache": true, "always": true },
+    { "php-version": "${PHP_MAX}", "db-image": "postgres:${PGSQL_MAX}", "coverage": "pcov", "cache": true, "always": true },
+    { "php-version": "${PHP_MAX}", "db-image": "mysql:${MYSQL_MIN}", "coverage": "none", "cache": true, "always": true },
+    { "php-version": "${PHP_MAX}", "db-image": "mysql:${MYSQL_MAX}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MAX}", "db-image": "mariadb:${MARIADB_MIN}", "coverage": "none", "cache": false, "always": true },
+    { "php-version": "${PHP_MAX}", "db-image": "mariadb:${MARIADB_MAX}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MIN}", "db-image": "postgres:${PGSQL_MIN}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MIN}", "db-image": "postgres:${PGSQL_MAX}", "coverage": "none", "cache": true, "always": true },
+    { "php-version": "${PHP_MIN}", "db-image": "mysql:${MYSQL_MIN}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MIN}", "db-image": "mysql:${MYSQL_MAX}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MIN}", "db-image": "mariadb:${MARIADB_MIN}", "coverage": "none", "cache": true, "always": false },
+    { "php-version": "${PHP_MIN}", "db-image": "mariadb:${MARIADB_MAX}", "coverage": "none", "cache": true, "always": false }
+  ]
+}
+
