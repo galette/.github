@@ -6,7 +6,7 @@ inputs:
     default: 'phpunit'
   all-jobs:
     description: 'Run all jobs'
-    default: 'false's
+    default: 'false'
 
 outputs:
   matrix:
@@ -43,6 +43,11 @@ runs:
           "export MARIADB_UNSUPPORTED=\(.mariadb_unsupported)"
         ' "$VERSIONS_FILE")"
         MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments)')
+        if [[ "${{ inputs.all-jobs }}" == "true" ]]; then
+          MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments)')
+        else
+          MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c 'del(._comments) | .include |= map(select(.always == true))')
+        fi
         echo "Generated matrix:"
         echo "$MATRIX" | jq .
         echo "matrix<<EOF" >> $GITHUB_OUTPUT
