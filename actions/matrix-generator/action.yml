@@ -44,12 +44,14 @@ runs:
         ' "$VERSIONS_FILE")"
         MATRIX=$(envsubst < "$MATRIX_FILE" | jq -c \
           --arg all "${{ inputs.all-jobs }}" \
+          --arg php_min "$PHP_MIN" \
           'del(._comments) |
-           if $all == "true" then
-             .
-           else
-             .include |= map(select(.always != false))
-           end')
+          if $all == "true" then
+            .
+          else
+            .include |= map(select(.always != false))
+          end |
+          .include |= map(. + {"php-is-min": (.["php-version"] == $php_min)})')
         echo "Generated matrix:"
         echo "$MATRIX" | jq .
         echo "matrix<<EOF" >> $GITHUB_OUTPUT
