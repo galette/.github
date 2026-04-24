@@ -6,7 +6,7 @@
     "- always test on one version"
   ],
   "include": [
-    { "php-version": "${PHP_MAX}", "db-image": "postgres:${PSQL_UNSUPPORTED}", "always": true},
+    { "php-version": "${PHP_MAX}", "db-image": "postgres:${PGSQL_UNSUPPORTED}", "always": true},
     { "php-version": "${PHP_MAX}", "db-image": "mysql:${MYSQL_UNSUPPORTED}", "always": false},
     { "php-version": "${PHP_MAX}", "db-image": "mariadb:${MARIADB_UNSUPPORTED}", "always": false}
   ]
