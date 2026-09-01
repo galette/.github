@@ -91,8 +91,10 @@ runs:
         fi
         echo "_define.php declares ${defined}, as expected."
 
+    # Unconditionally: in tag mode the worktree is the default branch while the
+    # archive is built from the tag's tree, so the worktree cannot tell whether
+    # the archive will need Composer.
     - name: PHP
-      if: hashFiles('composer.json') != ''
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ inputs.php-version }}
@@ -101,13 +103,11 @@ runs:
         coverage: none
 
     - name: Get Composer cache directory
-      if: hashFiles('composer.json') != ''
       id: composer-cache
       shell: bash
       run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
     - name: Cache Composer dependencies
-      if: hashFiles('composer.json') != ''
       uses: actions/cache@v6
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
@@ -157,7 +157,8 @@ runs:
           echo "::error::${name} carries no ${prefix}/_define.php, this is not a plugin archive"
           exit 1
         fi
-        if [ -f composer.json ] && ! grep -qx "${prefix}/vendor/autoload.php" <<< "$entries"; then
+        if grep -qx "${prefix}/composer.json" <<< "$entries" \
+           && ! grep -qx "${prefix}/vendor/autoload.php" <<< "$entries"; then
           echo "::error::composer install failed: no ${prefix}/vendor/autoload.php in ${name}"
           exit 1
         fi

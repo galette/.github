@@ -42,8 +42,12 @@ permissions:
   artifact-metadata: write
 
 steps:
+  # The default branch, not the tag: bin/release archives the tag's tree, but
+  # the tooling doing it has to be the current one — building an old tag with
+  # the bin/release that shipped in it would run whatever bugs it had.
   - uses: actions/checkout@v7
     with:
+      ref: ${{ github.event.repository.default_branch }}
       fetch-depth: 1
 
   # On a tag push, actions/checkout writes refs/tags/<tag> pointing straight at
@@ -102,7 +106,10 @@ gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins
 ## Notes
 
 - The action needs `bin/release` to accept `--no-sign`, and to survive lightweight tags in
-  the repository. Both landed in the plugins' scripts alongside this action.
+  the repository. Both landed in the plugins' scripts alongside this action. Since the script
+  is taken from the default branch and not from the tag, older tags are buildable too.
+- `@main` is unpinned, and this action holds `contents: write` for every plugin that calls it.
+  Cutting a `v1` tag and moving the callers to it is worth doing once the pilots are settled.
 - `bin/release` ignores the exit code of every subprocess it runs, so the action inspects the
   archive it produced: exactly one tarball, carrying `_define.php`, and `vendor/autoload.php`
   whenever the plugin has a `composer.json`.
