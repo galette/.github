@@ -226,6 +226,24 @@ runs:
           }
         fi
 
+    # A plugin page shows no version of its own: it reads the latest release when
+    # GitHub Pages builds it. Nothing else would ask for that build, so the page
+    # would keep announcing the previous release until its next commit. Only tag
+    # mode needs this — a nightly URL never changes.
+    - name: Rebuild the plugin page
+      if: steps.mode.outputs.mode == 'tag' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        # Legitimately absent, or served from a workflow rather than a branch, in
+        # which case there is no build to request.
+        gh api --method POST "repos/${REPO}/pages/builds" --silent || {
+          echo "::warning::could not request a GitHub Pages build for ${REPO}, see the error above. It may mean the repository publishes no page, or publishes it from a workflow rather than a branch. If it has one, its download link will keep naming the previous release until it is rebuilt."
+        }
+
     # One rolling prerelease whose asset and notes are replaced every night, so
     # watchers are notified once and never again. Being a prerelease, it is
     # excluded from releases/latest, and the plugin page keeps showing the

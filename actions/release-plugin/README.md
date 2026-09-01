@@ -41,6 +41,7 @@ permissions:
   id-token: write
   attestations: write
   artifact-metadata: write
+  pages: write
 
 steps:
   # The default branch, not the tag: bin/release archives the tag's tree, but
@@ -114,6 +115,9 @@ gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins
 - `bin/release` ignores the exit code of every subprocess it runs, so the action inspects the
   archive it produced: exactly one tarball, carrying `_define.php`, and `vendor/autoload.php`
   whenever the plugin has a `composer.json`.
+- A plugin page declares no version: the theme reads the latest release. That is captured
+  when GitHub Pages builds the site, so publishing a release is not enough — the action asks
+  for a page build afterwards, and warns rather than fails where there is no page to build.
 - `nightly-tag` is only worth setting when the default name cannot be used on a repository.
   Deleting an immutable release burns its tag name for good — GitHub then refuses to create
   that ref at all — so a repository that once had an immutable `nightly` needs another name.
