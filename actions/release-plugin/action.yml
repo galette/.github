@@ -11,6 +11,10 @@ inputs:
     description: 'Branch a nightly is built from. bin/release -n reads the local develop branch, so a plugin living on another branch needs it aliased to develop after checkout.'
     required: false
     default: 'develop'
+  nightly-tag:
+    description: 'Tag carrying the rolling nightly release. Only worth changing when the default name cannot be used on a repository, for instance because a deleted immutable release burnt it.'
+    required: false
+    default: 'nightly'
   php-version:
     description: 'PHP version used to install the plugin Composer dependencies'
     required: false
@@ -233,6 +237,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         REPO: ${{ github.repository }}
         BRANCH: ${{ inputs.nightly-branch }}
+        TAG: ${{ inputs.nightly-tag }}
         ARCHIVE: ${{ steps.build.outputs.archive }}
         SHA: ${{ github.sha }}
       run: |
@@ -243,11 +248,11 @@ runs:
         # workflow run and notifies nobody.
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-        git tag --force --annotate nightly --message "Nightly build $(date -u '+%Y-%m-%d')" "$SHA"
-        # Not fatal: a ruleset restricting tag pushes is a legitimate setup, and a
-        # nightly is still worth publishing without its source links being exact.
-        git push --force origin refs/tags/nightly || {
-          echo "::warning::could not move the nightly tag, see the error above. It may mean a ruleset restricts tag creation or updates on ${REPO}. The release is still published; its source links and the compare link at the end of its notes will point at whichever commit the tag already had."
+        git tag --force --annotate "$TAG" --message "Nightly build $(date -u '+%Y-%m-%d')" "$SHA"
+        # Not fatal: whatever refuses the tag, a nightly is still worth publishing
+        # without its source links being exact.
+        git push --force origin "refs/tags/${TAG}" || {
+          echo "::warning::could not move the ${TAG} tag, see the error above. It may mean a ruleset restricts tag creation or updates on ${REPO}, or that the name once belonged to an immutable release that was deleted. The release is still published; its source links and the compare link at the end of its notes will point at whichever commit the tag already had."
         }
 
         header=$(printf 'Automatic build of the `%s` branch, rebuilt every night. Not meant for production use.\n\nCommit: %s\nBuilt: %s UTC' \
@@ -260,7 +265,7 @@ runs:
         changelog=''
         if [ -n "$previous_tag" ]; then
           changelog=$(gh api "repos/${REPO}/releases/generate-notes" \
-            -f tag_name=nightly \
+            -f tag_name="$TAG" \
             -f target_commitish="$SHA" \
             -f previous_tag_name="$previous_tag" \
             --jq '.body' || true)
@@ -270,8 +275,8 @@ runs:
         else
           notes="$header"
         fi
-        if ! gh release view nightly --repo "$REPO" >/dev/null 2>&1; then
-          gh release create nightly \
+        if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          gh release create "$TAG" \
             --repo "$REPO" \
             --target "$BRANCH" \
             --prerelease \
@@ -283,13 +288,13 @@ runs:
         # answers a bare "Cannot upload assets to an immutable release", which
         # says nothing about what to do. The check also covers the release this
         # run just created, so the problem surfaces tonight and not tomorrow.
-        if [ "$(gh api "repos/${REPO}/releases/tags/nightly" --jq '.immutable // false')" = "true" ]; then
-          echo "::error::the nightly release is immutable, so its archive cannot be replaced every night. Turn immutable releases off for ${REPO}, then delete the nightly release and its tag before re-running."
+        if [ "$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.immutable // false')" = "true" ]; then
+          echo "::error::the ${TAG} release is immutable, so its archive cannot be replaced every night. Turn immutable releases off for ${REPO}, then delete the ${TAG} release and its tag before re-running. Note that deleting an immutable release burns its tag name for good, and nightly-tag then has to name another one."
           exit 1
         fi
 
-        gh release upload nightly "$ARCHIVE" --clobber --repo "$REPO" || {
-          echo "::error::could not attach ${ARCHIVE##*/} to the nightly release, see the error above. It may mean the release became immutable since it was created."
+        gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$REPO" || {
+          echo "::error::could not attach ${ARCHIVE##*/} to the ${TAG} release, see the error above. It may mean the release became immutable since it was created."
           exit 1
         }
-        gh release edit nightly --repo "$REPO" --notes "$notes"
+        gh release edit "$TAG" --repo "$REPO" --notes "$notes"
