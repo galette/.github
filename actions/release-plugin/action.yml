@@ -1,0 +1,237 @@
+name: 'Release a Galette plugin'
+description: 'Build a plugin archive with its own bin/release and publish it as a GitHub release'
+author: 'Galette Team'
+
+inputs:
+  version:
+    description: 'Tag to release. Leave empty to build a nightly instead.'
+    required: false
+    default: ''
+  nightly-branch:
+    description: 'Branch a nightly is built from. bin/release -n reads the local develop branch, so a plugin living on another branch needs it aliased to develop after checkout.'
+    required: false
+    default: 'develop'
+  php-version:
+    description: 'PHP version used to install the plugin Composer dependencies'
+    required: false
+    default: '8.3'
+  php-extensions:
+    description: 'PHP extensions needed to install the plugin Composer dependencies'
+    required: false
+    default: 'sodium'
+  attest:
+    description: 'Attach a signed build provenance attestation to the archive'
+    required: false
+    default: 'true'
+  dry-run:
+    description: 'Build the archive and upload it as a workflow artifact, publish nothing'
+    required: false
+    default: 'false'
+  token:
+    description: 'Token used to publish the release'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  archive:
+    description: 'Absolute path to the built archive'
+    value: ${{ steps.build.outputs.archive }}
+  archive-name:
+    description: 'File name of the built archive'
+    value: ${{ steps.build.outputs.archive-name }}
+  version:
+    description: 'Version that has been built, "dev" for a nightly'
+    value: ${{ steps.mode.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set mode
+      id: mode
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        if [ -z "$VERSION" ]; then
+          echo "mode=nightly" >> $GITHUB_OUTPUT
+          echo "version=dev" >> $GITHUB_OUTPUT
+        else
+          echo "mode=tag" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        fi
+
+    # bin/release reads the tag through GitPython, which needs the tag object
+    # itself: a lightweight tag has none. And the version it is asked to build
+    # has to be the one the tagged _define.php declares, or the archive would
+    # announce itself as something else.
+    - name: Check the tag
+      if: steps.mode.outputs.mode == 'tag'
+      shell: bash
+      env:
+        TAG: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        type=$(git cat-file -t "refs/tags/${TAG}" 2>/dev/null || echo missing)
+        if [ "$type" != "tag" ]; then
+          echo "::error::${TAG} is not an annotated tag in this checkout (got '${type}')"
+          exit 1
+        fi
+        # Both argument styles are in the wild: "'2.2.0', //Version" on older
+        # tags, "version: '2.2.0', //Version" on current ones.
+        defined=$(git show "${TAG}:_define.php" \
+          | sed -nE "s@^[[:space:]]*(version:[[:space:]]*)?'([^']+)',?[[:space:]]*//[[:space:]]*Version[[:space:]]*\$@\2@p" \
+          | head -n1)
+        if [ -z "$defined" ]; then
+          echo "::error::could not read the version from _define.php at ${TAG}"
+          exit 1
+        fi
+        if [ "$defined" != "$TAG" ]; then
+          echo "::error::trying to release ${TAG}, but the bumped version is ${defined}!"
+          exit 1
+        fi
+        echo "_define.php declares ${defined}, as expected."
+
+    - name: PHP
+      if: hashFiles('composer.json') != ''
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.php-extensions }}
+        tools: composer:v2
+        coverage: none
+
+    - name: Get Composer cache directory
+      if: hashFiles('composer.json') != ''
+      id: composer-cache
+      shell: bash
+      run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer dependencies
+      if: hashFiles('composer.json') != ''
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: "${{ runner.os }}-composer-${{ inputs.php-version }}-${{ hashFiles('composer.lock') }}"
+        restore-keys: |
+          ${{ runner.os }}-composer-${{ inputs.php-version }}-
+          ${{ runner.os }}-composer-
+
+    # Deliberately not actions/setup-python: it puts another interpreter first
+    # on PATH, and bin/release would then run without these two modules.
+    - name: Python dependencies for bin/release
+      shell: bash
+      run: python3 -m pip install --user --quiet --disable-pip-version-check GitPython termcolor
+
+    # -l -d <dir> is what keeps the build off ssh.galette.eu: in local mode the
+    # "does this release already exist?" check reads that directory and the
+    # upload becomes a copy into it.
+    - name: Build the archive
+      id: build
+      shell: bash
+      env:
+        MODE: ${{ steps.mode.outputs.mode }}
+        TAG: ${{ inputs.version }}
+        OUTDIR: ${{ runner.temp }}/plugin-release
+      run: |
+        set -euo pipefail
+        mkdir -p "$OUTDIR"
+        if [ "$MODE" = "nightly" ]; then
+          python3 bin/release -V -n -l -d "$OUTDIR"
+        else
+          python3 bin/release -V -Y --no-sign -l -d "$OUTDIR" -v "$TAG"
+        fi
+
+        # bin/release ignores the exit code of every subprocess it runs, so a
+        # failed composer install yields an archive without vendor/ and a happy
+        # exit status. The archive is the only thing worth believing.
+        mapfile -t archives < <(find "$OUTDIR" -maxdepth 1 -type f -name '*.tar.bz2')
+        if [ "${#archives[@]}" -ne 1 ]; then
+          echo "::error::expected exactly one archive in ${OUTDIR}, found ${#archives[@]}"
+          exit 1
+        fi
+        archive="${archives[0]}"
+        name=$(basename "$archive")
+        prefix="${name%.tar.bz2}"
+        entries=$(tar -tjf "$archive")
+        if ! grep -qx "${prefix}/_define.php" <<< "$entries"; then
+          echo "::error::${name} carries no ${prefix}/_define.php, this is not a plugin archive"
+          exit 1
+        fi
+        if [ -f composer.json ] && ! grep -qx "${prefix}/vendor/autoload.php" <<< "$entries"; then
+          echo "::error::composer install failed: no ${prefix}/vendor/autoload.php in ${name}"
+          exit 1
+        fi
+        echo "archive=$archive" >> "$GITHUB_OUTPUT"
+        echo "archive-name=$name" >> "$GITHUB_OUTPUT"
+        ls -lh "$archive"
+
+    # Replaces the detached GPG signature galette.eu used to serve: it ties the
+    # archive to the repository, the workflow and the commit that built it,
+    # without a private key living anywhere. Verify a download with
+    # `gh attestation verify <archive> --repo <owner>/<repo>`.
+    - name: Attest build provenance
+      if: inputs.attest == 'true' && inputs.dry-run != 'true'
+      uses: actions/attest@v4
+      with:
+        subject-path: ${{ steps.build.outputs.archive }}
+
+    - name: Upload the archive as an artifact
+      if: inputs.dry-run == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.build.outputs.archive-name }}
+        path: ${{ steps.build.outputs.archive }}
+        if-no-files-found: error
+        retention-days: 7
+
+    - name: Publish the release
+      if: steps.mode.outputs.mode == 'tag' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ inputs.version }}
+        ARCHIVE: ${{ steps.build.outputs.archive }}
+      run: |
+        set -euo pipefail
+        # A maintainer may have created the release by hand right after pushing
+        # the tag; refresh its asset rather than failing on a 422.
+        if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          echo "Release ${TAG} already exists, refreshing its asset."
+          gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$REPO"
+        else
+          # --notes-from-tag would be useless here: plugin tag annotations only
+          # repeat the version number.
+          gh release create "$TAG" "$ARCHIVE" \
+            --repo "$REPO" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes
+        fi
+
+    # One rolling prerelease whose asset is replaced every night. The tag is
+    # never moved: a prerelease is excluded from releases/latest, so the plugin
+    # page keeps showing the stable version, and nothing renotifies watchers.
+    - name: Publish the nightly
+      if: steps.mode.outputs.mode == 'nightly' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ inputs.nightly-branch }}
+        ARCHIVE: ${{ steps.build.outputs.archive }}
+        SHA: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        notes=$(printf 'Automatic build of the `%s` branch, rebuilt every night. Not meant for production use.\n\nCommit: %s\nBuilt: %s UTC' \
+          "$BRANCH" "$SHA" "$(date -u '+%Y-%m-%d %H:%M')")
+        if ! gh release view nightly --repo "$REPO" >/dev/null 2>&1; then
+          gh release create nightly \
+            --repo "$REPO" \
+            --target "$BRANCH" \
+            --prerelease \
+            --title 'Nightly build' \
+            --notes "$notes"
+        fi
+        gh release upload nightly "$ARCHIVE" --clobber --repo "$REPO"
+        gh release edit nightly --repo "$REPO" --notes "$notes"

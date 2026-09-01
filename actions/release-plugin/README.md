@@ -1,0 +1,109 @@
+# Release a Galette Plugin
+
+This composite GitHub Action builds a plugin archive with the plugin's own `bin/release`
+and publishes it as a GitHub release, in two modes:
+
+- **tag** — a pushed tag produces `galette-plugin-<slug>-<version>.tar.bz2`, attached to the
+  release for that tag;
+- **nightly** — a daily build of the development branch, attached to a single rolling
+  prerelease named `nightly` whose asset is replaced every night.
+
+Plugin archives are published on GitHub only; nothing is uploaded to galette.eu any more.
+
+## Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `version` | No | `''` | Tag to release. Empty builds a nightly instead. |
+| `nightly-branch` | No | `develop` | Branch a nightly is built from. |
+| `php-version` | No | `8.3` | PHP version used to install the plugin Composer dependencies. |
+| `php-extensions` | No | `sodium` | PHP extensions needed to install them. |
+| `attest` | No | `true` | Attach a signed build provenance attestation. |
+| `dry-run` | No | `false` | Build the archive and upload it as a workflow artifact, publish nothing. |
+| `token` | No | `${{ github.token }}` | Token used to publish the release. |
+
+## Outputs
+
+| Output | Description |
+|--------|-------------|
+| `archive` | Absolute path to the built archive |
+| `archive-name` | File name of the built archive |
+| `version` | Version that was built, `dev` for a nightly |
+
+## Usage
+
+### On a tag
+
+```yaml
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+steps:
+  - uses: actions/checkout@v7
+    with:
+      fetch-depth: 1
+
+  # On a tag push, actions/checkout writes refs/tags/<tag> pointing straight at
+  # the commit, i.e. a lightweight tag, even when the remote tag is annotated.
+  # bin/release reads the tag object, so fetch it back.
+  - name: Fetch the annotated tag
+    run: git fetch --no-tags --force --depth=1 origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+  - uses: galette/.github/actions/release-plugin@main
+    with:
+      version: ${{ github.ref_name }}
+```
+
+Do **not** use `fetch-depth: 0` or `fetch-tags: true`: they bring in every tag, including
+the lightweight ones some plugins still carry, on which `bin/release` fails.
+
+### Nightly
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+    with:
+      ref: develop
+      fetch-depth: 1
+
+  - uses: galette/.github/actions/release-plugin@main
+```
+
+`bin/release -n` resolves the local `develop` branch, so a plugin whose development branch
+has another name needs `git branch -f develop HEAD` after the checkout, along with
+`nightly-branch`.
+
+## Releasing a plugin
+
+1. Bump `version:` (and `date:`) in `_define.php`, and `compver:` if the plugin now needs a
+   newer Galette.
+2. Recompile the translations: `cd lang && make mo`. The `.mo` files are committed and
+   `git archive` ships the tree of the tag, so a build never regenerates them.
+3. Commit, then tag **annotated** with the bare version number: `git tag -a 2.3.0 -m 2.3.0`.
+   Lightweight tags and `v`-prefixed tags are rejected.
+4. Push the tag. The workflow checks that `_define.php` at that tag declares exactly that
+   version, builds the archive, and publishes the release.
+
+To rehearse without touching tags, run the workflow manually with `dry-run: true`: the
+archive is uploaded as a workflow artifact and nothing is published.
+
+## Verifying a download
+
+Every published archive carries a build provenance attestation, which replaces the detached
+GPG signature that used to sit next to the tarballs on galette.eu:
+
+```bash
+gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins/plugin-oauth2
+```
+
+## Notes
+
+- The action needs `bin/release` to accept `--no-sign`, and to survive lightweight tags in
+  the repository. Both landed in the plugins' scripts alongside this action.
+- `bin/release` ignores the exit code of every subprocess it runs, so the action inspects the
+  archive it produced: exactly one tarball, carrying `_define.php`, and `vendor/autoload.php`
+  whenever the plugin has a `composer.json`.
+- If a repository ever enables immutable releases, refreshing the nightly asset stops working.
