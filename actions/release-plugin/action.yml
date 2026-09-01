@@ -244,9 +244,10 @@ runs:
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
         git tag --force --annotate nightly --message "Nightly build $(date -u '+%Y-%m-%d')" "$SHA"
+        # Not fatal: a ruleset restricting tag pushes is a legitimate setup, and a
+        # nightly is still worth publishing without its source links being exact.
         git push --force origin refs/tags/nightly || {
-          echo "::error::could not move the nightly tag, see the error above. It may mean a ruleset forbids force-pushing tags on ${REPO}."
-          exit 1
+          echo "::warning::could not move the nightly tag, see the error above. It may mean a ruleset restricts tag creation or updates on ${REPO}. The release is still published; its source links and the compare link at the end of its notes will point at whichever commit the tag already had."
         }
 
         header=$(printf 'Automatic build of the `%s` branch, rebuilt every night. Not meant for production use.\n\nCommit: %s\nBuilt: %s UTC' \
@@ -272,7 +273,7 @@ runs:
         if ! gh release view nightly --repo "$REPO" >/dev/null 2>&1; then
           gh release create nightly \
             --repo "$REPO" \
-            --verify-tag \
+            --target "$BRANCH" \
             --prerelease \
             --title 'Nightly build' \
             --notes "$notes"
