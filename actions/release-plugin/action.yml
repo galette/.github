@@ -203,7 +203,12 @@ runs:
             exit 1
           fi
           echo "Release ${TAG} already exists, refreshing its asset."
-          gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$REPO"
+          # gh's own error is left to speak for itself; this only says what it
+          # may mean. Add to the list as other causes turn up.
+          gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$REPO" || {
+            echo "::error::could not attach ${ARCHIVE##*/} to release ${TAG}, see the error above. It may mean the release is immutable and its assets can no longer be replaced."
+            exit 1
+          }
         else
           # --notes-from-tag would be useless here: plugin tag annotations only
           # repeat the version number.
@@ -211,12 +216,16 @@ runs:
             --repo "$REPO" \
             --verify-tag \
             --title "$TAG" \
-            --generate-notes
+            --generate-notes || {
+            echo "::error::could not create release ${TAG}, see the error above. It may mean the tag is missing on the remote (--verify-tag), or that a release already exists for it."
+            exit 1
+          }
         fi
 
-    # One rolling prerelease whose asset is replaced every night. The tag is
-    # never moved: a prerelease is excluded from releases/latest, so the plugin
-    # page keeps showing the stable version, and nothing renotifies watchers.
+    # One rolling prerelease whose asset and notes are replaced every night, so
+    # watchers are notified once and never again. Being a prerelease, it is
+    # excluded from releases/latest, and the plugin page keeps showing the
+    # stable version.
     - name: Publish the nightly
       if: steps.mode.outputs.mode == 'nightly' && inputs.dry-run != 'true'
       shell: bash
@@ -228,12 +237,42 @@ runs:
         SHA: ${{ github.sha }}
       run: |
         set -euo pipefail
-        notes=$(printf 'Automatic build of the `%s` branch, rebuilt every night. Not meant for production use.\n\nCommit: %s\nBuilt: %s UTC' \
+        # The tag follows the built commit, so the release page's source links and
+        # the compare link GitHub puts at the end of generated notes both point at
+        # what was actually built. Pushed with GITHUB_TOKEN, which starts no
+        # workflow run and notifies nobody.
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git tag --force --annotate nightly --message "Nightly build $(date -u '+%Y-%m-%d')" "$SHA"
+        git push --force origin refs/tags/nightly || {
+          echo "::error::could not move the nightly tag, see the error above. It may mean a ruleset forbids force-pushing tags on ${REPO}."
+          exit 1
+        }
+
+        header=$(printf 'Automatic build of the `%s` branch, rebuilt every night. Not meant for production use.\n\nCommit: %s\nBuilt: %s UTC' \
           "$BRANCH" "$SHA" "$(date -u '+%Y-%m-%d %H:%M')")
+
+        # What the nightly carries over the last stable release. previous_tag is
+        # passed explicitly: left to itself GitHub would take the most recent
+        # release, which is the nightly itself, and produce nothing.
+        previous_tag=$(gh release list --repo "$REPO" --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty' || true)
+        changelog=''
+        if [ -n "$previous_tag" ]; then
+          changelog=$(gh api "repos/${REPO}/releases/generate-notes" \
+            -f tag_name=nightly \
+            -f target_commitish="$SHA" \
+            -f previous_tag_name="$previous_tag" \
+            --jq '.body' || true)
+        fi
+        if [ -n "$changelog" ]; then
+          notes=$(printf '%s\n\n%s' "$header" "$changelog")
+        else
+          notes="$header"
+        fi
         if ! gh release view nightly --repo "$REPO" >/dev/null 2>&1; then
           gh release create nightly \
             --repo "$REPO" \
-            --target "$BRANCH" \
+            --verify-tag \
             --prerelease \
             --title 'Nightly build' \
             --notes "$notes"
@@ -248,5 +287,8 @@ runs:
           exit 1
         fi
 
-        gh release upload nightly "$ARCHIVE" --clobber --repo "$REPO"
+        gh release upload nightly "$ARCHIVE" --clobber --repo "$REPO" || {
+          echo "::error::could not attach ${ARCHIVE##*/} to the nightly release, see the error above. It may mean the release became immutable since it was created."
+          exit 1
+        }
         gh release edit nightly --repo "$REPO" --notes "$notes"
