@@ -198,6 +198,10 @@ runs:
         # A maintainer may have created the release by hand right after pushing
         # the tag; refresh its asset rather than failing on a 422.
         if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          if [ "$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.immutable // false')" = "true" ]; then
+            echo "::error::release ${TAG} already exists and is immutable, its asset cannot be replaced. Attach ${ARCHIVE##*/} by hand, or delete the release and re-run this workflow."
+            exit 1
+          fi
           echo "Release ${TAG} already exists, refreshing its asset."
           gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$REPO"
         else
@@ -234,5 +238,15 @@ runs:
             --title 'Nightly build' \
             --notes "$notes"
         fi
+
+        # Checked on the release rather than left to fail on the upload: the API
+        # answers a bare "Cannot upload assets to an immutable release", which
+        # says nothing about what to do. The check also covers the release this
+        # run just created, so the problem surfaces tonight and not tomorrow.
+        if [ "$(gh api "repos/${REPO}/releases/tags/nightly" --jq '.immutable // false')" = "true" ]; then
+          echo "::error::the nightly release is immutable, so its archive cannot be replaced every night. Turn immutable releases off for ${REPO}, then delete the nightly release and its tag before re-running."
+          exit 1
+        fi
+
         gh release upload nightly "$ARCHIVE" --clobber --repo "$REPO"
         gh release edit nightly --repo "$REPO" --notes "$notes"

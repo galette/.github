@@ -113,4 +113,7 @@ gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins
 - `bin/release` ignores the exit code of every subprocess it runs, so the action inspects the
   archive it produced: exactly one tarball, carrying `_define.php`, and `vendor/autoload.php`
   whenever the plugin has a `composer.json`.
-- If a repository ever enables immutable releases, refreshing the nightly asset stops working.
+- A rolling nightly needs mutable releases: its archive is replaced every night. If a
+  repository enables immutable releases, the workflow stops with an explicit error naming the
+  setting rather than letting the upload fail on an opaque API message. Tag releases are
+  unaffected — their asset goes in when the release is created.
