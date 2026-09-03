@@ -64,37 +64,6 @@ runs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
         fi
 
-    # bin/release reads the tag through GitPython, which needs the tag object
-    # itself: a lightweight tag has none. And the version it is asked to build
-    # has to be the one the tagged _define.php declares, or the archive would
-    # announce itself as something else.
-    - name: Check the tag
-      if: steps.mode.outputs.mode == 'tag'
-      shell: bash
-      env:
-        TAG: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        type=$(git cat-file -t "refs/tags/${TAG}" 2>/dev/null || echo missing)
-        if [ "$type" != "tag" ]; then
-          echo "::error::${TAG} is not an annotated tag in this checkout (got '${type}')"
-          exit 1
-        fi
-        # Both argument styles are in the wild: "'2.2.0', //Version" on older
-        # tags, "version: '2.2.0', //Version" on current ones.
-        defined=$(git show "${TAG}:_define.php" \
-          | sed -nE "s@^[[:space:]]*(version:[[:space:]]*)?'([^']+)',?[[:space:]]*//[[:space:]]*Version[[:space:]]*\$@\2@p" \
-          | head -n1)
-        if [ -z "$defined" ]; then
-          echo "::error::could not read the version from _define.php at ${TAG}"
-          exit 1
-        fi
-        if [ "$defined" != "$TAG" ]; then
-          echo "::error::trying to release ${TAG}, but the bumped version is ${defined}!"
-          exit 1
-        fi
-        echo "_define.php declares ${defined}, as expected."
-
     # Unconditionally: in tag mode the worktree is the default branch while the
     # archive is built from the tag's tree, so the worktree cannot tell whether
     # the archive will need Composer.
@@ -105,6 +74,40 @@ runs:
         extensions: ${{ inputs.php-extensions }}
         tools: composer:v2
         coverage: none
+
+    # bin/release reads the tag through GitPython, which needs the tag object
+    # itself: a lightweight tag has none. And the version it is asked to build
+    # has to be the one the tagged _define.php declares, or the archive would
+    # announce itself as something else.
+    #
+    # After the PHP step, because read-define.php replaces the regex this used to
+    # run: plugin-legalnotices passes its arguments positionally and carries no
+    # trailing comments at all, so anchoring on "//Version" read nothing there and
+    # would have failed its very first release.
+    - name: Check the tag
+      if: steps.mode.outputs.mode == 'tag'
+      shell: bash
+      env:
+        TAG: ${{ inputs.version }}
+        READER: ${{ github.action_path }}/read-define.php
+      run: |
+        set -euo pipefail
+        type=$(git cat-file -t "refs/tags/${TAG}" 2>/dev/null || echo missing)
+        if [ "$type" != "tag" ]; then
+          echo "::error::${TAG} is not an annotated tag in this checkout (got '${type}')"
+          exit 1
+        fi
+        git show "${TAG}:_define.php" > "${RUNNER_TEMP}/_define.php"
+        defined=$(php "$READER" "${RUNNER_TEMP}/_define.php" | jq -r '.version // empty')
+        if [ -z "$defined" ]; then
+          echo "::error::could not read the version from _define.php at ${TAG}"
+          exit 1
+        fi
+        if [ "$defined" != "$TAG" ]; then
+          echo "::error::trying to release ${TAG}, but the bumped version is ${defined}!"
+          exit 1
+        fi
+        echo "_define.php declares ${defined}, as expected."
 
     - name: Get Composer cache directory
       id: composer-cache

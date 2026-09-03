@@ -118,6 +118,12 @@ gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins
 - A plugin page declares no version: the theme reads the latest release. That is captured
   when GitHub Pages builds the site, so publishing a release is not enough — the action asks
   for a page build afterwards, and warns rather than fails where there is no page to build.
+- `read-define.php` is the one way this action reads a `_define.php`. It replays the real
+  signature of `Plugins::register()` rather than matching text, because the plugins in the
+  wild do not agree on shape: most pass named arguments, `plugin-oauth2` and
+  `plugin-legalnotices` pass them positionally, `plugin-legalnotices` carries no trailing
+  comments at all, and `plugin-objectslend` writes `//Galette version compatibility` where
+  everything else writes `//Galette compatible version`.
 - `nightly-tag` is only worth setting when the default name cannot be used on a repository.
   Deleting an immutable release burns its tag name for good — GitHub then refuses to create
   that ref at all — so a repository that once had an immutable `nightly` needs another name.
