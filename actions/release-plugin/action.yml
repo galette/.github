@@ -229,6 +229,151 @@ runs:
           }
         fi
 
+    # The plugin page names the Galette version the release targets, and can only
+    # read it from a file on its own Pages branch — Jekyll on Pages runs in safe
+    # mode, so it reaches neither another branch nor the network. That value used
+    # to be `plugin.min_galette`, kept by hand in the site's _config.yml — and
+    # eight of the eleven sites had it wrong, all in the same way: the number was
+    # copied from `develop`, which declares the generation being prepared, while
+    # the link beside it points at a release declaring the previous one. It is
+    # `compver` in _define.php, so it is read from the tag that was released.
+    #
+    # `compver` is the Galette generation the build targets, not an open floor:
+    # Plugins::register() disables a plugin whose compver is LOWER than the
+    # running Galette's GALETTE_COMPAT_VERSION, and imposes no upper bound.
+    #
+    # Nothing equivalent runs in nightly mode: a nightly requires a nightly, so
+    # the page labels it as such, and this would commit every night.
+    - name: Publish the targeted Galette version to the plugin page
+      if: steps.mode.outputs.mode == 'tag' && inputs.dry-run != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ inputs.version }}
+        READER: ${{ github.action_path }}/read-define.php
+      run: |
+        set -uo pipefail
+
+        # Only ever the release the cartouche actually links. Step 4b of
+        # MIGRATE_PLUGINS.md republishes the whole back catalogue with
+        # --latest=false, and an old version being re-uploaded must not rewrite
+        # the page with the generation it targeted years ago.
+        latest=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null)
+        if [ "${latest:-}" != "$TAG" ]; then
+          echo "${TAG} is not releases/latest (${latest:-none}), so the page keeps naming the Galette version of the release it links."
+          exit 0
+        fi
+
+        # The tag's tree, not the worktree: the worktree is the default branch,
+        # which may already have moved past the release being published.
+        define="${RUNNER_TEMP}/_define.php"
+        if ! git show "${TAG}:_define.php" > "$define"; then
+          echo "::warning::could not read _define.php at ${TAG}, so the page keeps whatever Galette version it already names"
+          exit 0
+        fi
+
+        if ! meta=$(php "$READER" "$define"); then
+          echo "::warning::could not read the metadata of _define.php at ${TAG}, see the error above, so the page keeps whatever Galette version it already names"
+          exit 0
+        fi
+
+        compver=$(printf '%s' "$meta" | jq -r '.compver // empty')
+        if [ -z "$compver" ]; then
+          echo "::warning::_define.php at ${TAG} declares no compver, so the page names no Galette version. Galette itself refuses to load a plugin without one, see Plugins::register()."
+          exit 0
+        fi
+
+        # The page shows a generation, "1.2", not "1.2.0": that is what compver
+        # means, and one number fewer to read. cut leaves a two-part value alone,
+        # so "1.2" stays "1.2".
+        series=$(printf '%s' "$compver" | cut -d. -f1,2)
+
+        # Liquid cannot compare versions, so the page compares integers. Padded
+        # so the order is right whatever the numbers: 1.2.0 -> 1002000, and
+        # 1.10.0 -> 1010000, which a naive concatenation would sort below 1.2.0.
+        rank=$(printf '%s' "$compver" | awk -F. '{printf "%d", $1 * 1000000 + $2 * 1000 + $3}')
+        if [ -z "$rank" ] || [ "$rank" = "0" ]; then
+          echo "::warning::compver ${compver} at ${TAG} is not a version this can rank, so the page will name it without a compatibility verdict"
+          rank=''
+        fi
+
+        # The Pages branch is not always gh-pages — stripe, legalnotices and
+        # helloasso publish from gh-pages-galette-theme — and the source may be a
+        # subdirectory, so both are read rather than assumed. Same discovery as
+        # theme-ghpages' bin/rebuild-consumers.
+        pages=$(gh api "repos/${REPO}/pages" 2>/dev/null)
+        branch=$(printf '%s' "$pages" | jq -r '.source.branch // empty')
+        dir=$(printf '%s' "$pages" | jq -r '.source.path // "/"')
+        if [ -z "$branch" ]; then
+          echo "::warning::${REPO} publishes no page from a branch, so there is nowhere to write the Galette version it targets"
+          exit 0
+        fi
+        prefix=''
+        [ "$dir" != "/" ] && prefix="${dir#/}/"
+
+        # Only a site built on this theme reads _data/galette.yml; anywhere else
+        # it would just be a stray file nobody looks at. Several repositories
+        # still carry a pre-migration gh-pages branch beside the real one, and
+        # the Pages source is not always the branch you would guess.
+        config=$(gh api "repos/${REPO}/contents/${prefix}_config.yml?ref=${branch}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null)
+        if ! printf '%s' "${config:-}" | grep -q 'remote_theme:.*galette/theme-ghpages'; then
+          echo "The page of ${REPO} on ${branch} is not built on galette/theme-ghpages; leaving it alone."
+          exit 0
+        fi
+
+        path="${prefix}_data/galette.yml"
+
+        # Written line by line rather than with a heredoc: the delimiter of one
+        # would have to sit at the start of a line, which this indented block
+        # scalar cannot offer.
+        out="${RUNNER_TEMP}/galette.yml"
+        {
+          echo '# GENERATED at each release by galette/.github/actions/release-plugin, from'
+          echo '# `compver` in _define.php at the released tag. Do not edit it: the next'
+          echo '# release overwrites it.'
+          echo '#'
+          echo '# `compver` is the Galette generation this release targets, not a floor with'
+          echo '# no ceiling: Galette disables a plugin whose compver is lower than its own'
+          echo '# GALETTE_COMPAT_VERSION. So the page reads "Compatible Galette '"${series}"'",'
+          echo '# and the generation after that one refuses this release.'
+          echo '#'
+          echo '# `release` is what the theme checks the rest against: it ignores these'
+          echo '# values unless they describe the release the download cartouche names.'
+          echo '#'
+          echo '# `rank` is compver packed into an integer, because Liquid has no version'
+          echo '# comparison. The page shows a verdict only on a value it can rank, so an'
+          echo '# unrankable compver is published without one rather than judged wrongly.'
+          echo "release: \"${TAG}\""
+          echo "compver: \"${compver}\""
+          echo "series: \"${series}\""
+          if [ -n "$rank" ]; then
+            echo "rank: ${rank}"
+          fi
+        } > "$out"
+
+        current=$(gh api "repos/${REPO}/contents/${path}?ref=${branch}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null)
+        if [ "$current" = "$(cat "$out")" ]; then
+          echo "${path} on ${branch} already names Galette ${series} for ${TAG}, nothing to commit."
+          exit 0
+        fi
+
+        # Through the contents API rather than a checkout: the worktree is on
+        # another ref and the archive was built from it, so it is left alone.
+        # Only ever _data/ — Weblate owns the pages themselves on this branch.
+        args=(-f "message=Name the Galette version ${TAG} targets"
+              -f "content=$(base64 -w0 < "$out")"
+              -f "branch=${branch}")
+        sha=$(gh api "repos/${REPO}/contents/${path}?ref=${branch}" --jq '.sha' 2>/dev/null)
+        if [ -n "${sha:-}" ]; then
+          args+=(-f "sha=${sha}")
+        fi
+        if ! gh api --method PUT "repos/${REPO}/contents/${path}" "${args[@]}" --silent; then
+          echo "::warning::could not write ${path} on ${branch} of ${REPO}, see the error above. It may mean the calling workflow was not granted contents: write, or that a ruleset protects the branch. The page will keep naming whatever Galette version it already had."
+          exit 0
+        fi
+        echo "${path} on ${branch} now names Galette ${series} for ${TAG}."
+
     # A plugin page shows no version of its own: it reads the latest release when
     # GitHub Pages builds it. Nothing else would ask for that build, so the page
     # would keep announcing the previous release until its next commit. Only tag

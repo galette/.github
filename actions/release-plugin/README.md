@@ -84,8 +84,9 @@ has another name needs `git branch -f develop HEAD` after the checkout, along wi
 
 ## Releasing a plugin
 
-1. Bump `version:` (and `date:`) in `_define.php`, and `compver:` if the plugin now needs a
-   newer Galette.
+1. Bump `version:` (and `date:`) in `_define.php`, and `compver:` if the plugin now targets a
+   newer Galette generation. `compver` is what the plugin page will name, so it is worth
+   getting right before the tag rather than after.
 2. Recompile the translations: `cd lang && make mo`. The `.mo` files are committed and
    `git archive` ships the tree of the tag, so a build never regenerates them.
 3. Commit, then tag **annotated** with the bare version number: `git tag -a 2.3.0 -m 2.3.0`.
@@ -95,6 +96,42 @@ has another name needs `git branch -f develop HEAD` after the checkout, along wi
 
 To rehearse without touching tags, run the workflow manually with `dry-run: true`: the
 archive is uploaded as a workflow artifact and nothing is published.
+
+## What it writes on the Pages branch
+
+A plugin page names the Galette generation its stable download targets. That number is
+`compver` in `_define.php`, which lives on the code branches while the site lives on a Pages
+branch of the same repository — and Jekyll on GitHub Pages runs in safe mode, so it can read
+neither another branch nor the network. The action therefore copies it across, as
+`_data/galette.yml` on the Pages branch:
+
+```yaml
+release: "2.2.1"
+compver: "1.2.0"
+series: "1.2"
+```
+
+The theme reads `site.data.galette.series`, and ignores the file unless `release` matches the
+release its download cartouche actually names. `plugin.min_galette` in the site's
+`_config.yml` stays as the fallback, for a plugin with no release workflow yet.
+
+Being the same repository, `github.token` is enough — no cross-repo secret. What matters:
+
+- **Only in tag mode**, and only when the tag *is* `releases/latest`. Republishing an old
+  version with `--latest=false` must not make the page name the generation that release
+  targeted. A nightly writes nothing at all: it requires a Galette nightly, which is what the
+  page says, and writing every night would commit every night.
+- **Only when the value changes**, and only on a branch whose `_config.yml` references
+  `galette/theme-ghpages`. The Pages branch is discovered through the API, never assumed: it
+  is `gh-pages-galette-theme` on three plugins, and may be a subdirectory.
+- **Never fatal.** A protected branch, a race with Weblate on the same branch, no page at
+  all — each one warns and leaves the page naming whatever it had. A published release is
+  never failed over a documentation file.
+
+`compver` is the Galette *generation* a build targets, not an open floor:
+`Galette\Core\Plugins::register()` disables a plugin whose `compver` is **lower** than the
+running Galette's `GALETTE_COMPAT_VERSION`, and imposes no upper bound. A release declaring
+`1.2.0` is refused by Galette 1.3, so the page reads "for Galette 1.2".
 
 ## Verifying a download
 
@@ -118,6 +155,7 @@ gh attestation verify galette-plugin-oauth2-3.0.2.tar.bz2 --repo galette-plugins
 - A plugin page declares no version: the theme reads the latest release. That is captured
   when GitHub Pages builds the site, so publishing a release is not enough — the action asks
   for a page build afterwards, and warns rather than fails where there is no page to build.
+  The same build picks up the `_data/galette.yml` written just before it.
 - `read-define.php` is the one way this action reads a `_define.php`. It replays the real
   signature of `Plugins::register()` rather than matching text, because the plugins in the
   wild do not agree on shape: most pass named arguments, `plugin-oauth2` and
