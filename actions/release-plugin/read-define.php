@@ -2,7 +2,7 @@
 
 /**
  * Reads the metadata a Galette plugin declares in its _define.php, and prints it
- * as JSON: {"version": "2.2.1", "compver": "1.3.0"}.
+ * as JSON: {"name": "Galette Maps", "version": "2.2.1", "compver": "1.3.0"}.
  *
  * Usage: php read-define.php <path to a _define.php>
  *
@@ -47,7 +47,7 @@ final class DefineReader
         ?int $priority = 1000,
         ?float $dbver = null
     ): void {
-        $this->meta = ['version' => $version, 'compver' => $compver];
+        $this->meta = ['name' => $name, 'version' => $version, 'compver' => $compver];
     }
 
     /**

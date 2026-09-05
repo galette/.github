@@ -35,6 +35,14 @@ inputs:
     description: 'Token used to publish the release'
     required: false
     default: ${{ github.token }}
+  mastodon-token:
+    description: 'Mastodon access token used to announce the release. Empty means the release is not announced, which is not an error: the organisation secret is restricted to selected repositories, so every other one reads an empty string.'
+    required: false
+    default: ''
+  mastodon-instance:
+    description: 'Host of the Mastodon instance to announce on, for instance framapiaf.org. Belongs with mastodon-token; the account announced to is the one that token belongs to.'
+    required: false
+    default: ''
 
 outputs:
   archive:
@@ -400,6 +408,74 @@ runs:
         gh api --method POST "repos/${REPO}/pages/builds" --silent || {
           echo "::warning::could not request a GitHub Pages build for ${REPO}, see the error above. It may mean the repository publishes no page, or publishes it from a workflow rather than a branch. If it has one, its download link will keep naming the previous release until it is rebuilt."
         }
+
+    # Announced only for the release the plugin page actually links. Same reason
+    # as the _data/galette.yml step above: step 4b of MIGRATE_PLUGINS.md
+    # republishes the whole back catalogue with --latest=false, and eleven old
+    # versions must not each produce a toot.
+    #
+    # The name comes from the tag's _define.php rather than from the repository
+    # name: it is what the plugin calls itself, "Galette Objects Lend" rather
+    # than "plugin-objectslend".
+    - name: Compose the announcement
+      id: announce
+      if: steps.mode.outputs.mode == 'tag' && inputs.dry-run != 'true' && inputs.mastodon-token != '' && inputs.mastodon-instance != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ inputs.version }}
+        SERVER: ${{ github.server_url }}
+        READER: ${{ github.action_path }}/read-define.php
+      run: |
+        set -uo pipefail
+        echo "announce=false" >> "$GITHUB_OUTPUT"
+
+        latest=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null)
+        if [ "${latest:-}" != "$TAG" ]; then
+          echo "${TAG} is not releases/latest (${latest:-none}), so nothing is announced."
+          exit 0
+        fi
+
+        # Never fatal: the archive is published and the page is up to date, an
+        # announcement that cannot be composed is not worth failing the release
+        # over. It can always be written by hand.
+        define="${RUNNER_TEMP}/_define.php"
+        if ! git show "${TAG}:_define.php" > "$define"; then
+          echo "::warning::could not read _define.php at ${TAG}, so ${TAG} is not announced"
+          exit 0
+        fi
+        if ! meta=$(php "$READER" "$define"); then
+          echo "::warning::could not read the metadata of _define.php at ${TAG}, see the error above, so ${TAG} is not announced"
+          exit 0
+        fi
+        name=$(printf '%s' "$meta" | jq -r '.name // empty')
+        if [ -z "$name" ]; then
+          echo "::warning::_define.php at ${TAG} declares no name, so ${TAG} is not announced"
+          exit 0
+        fi
+
+        {
+          echo 'status<<TOOT_EOF'
+          printf '%s %s is out!\n\n%s/%s/releases/tag/%s\n' \
+            "$name" "$TAG" "$SERVER" "$REPO" "$TAG"
+          echo 'TOOT_EOF'
+          echo "announce=true"
+        } >> "$GITHUB_OUTPUT"
+
+    # Referenced by its full name rather than by a relative path: inside a
+    # composite action a local `uses:` resolves against the caller's checkout,
+    # which is a plugin, not this repository.
+    - name: Announce the release
+      if: steps.announce.outputs.announce == 'true'
+      uses: galette/.github/actions/toot@main
+      with:
+        status: ${{ steps.announce.outputs.status }}
+        token: ${{ inputs.mastodon-token }}
+        instance: ${{ inputs.mastodon-instance }}
+        # Mastodon returns the status it already has rather than creating a
+        # second one, so re-running a failed release does not announce twice.
+        idempotency-key: ${{ github.repository }}-${{ inputs.version }}
 
     # One rolling prerelease whose asset and notes are replaced every night, so
     # watchers are notified once and never again. Being a prerelease, it is

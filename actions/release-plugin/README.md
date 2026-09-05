@@ -22,6 +22,8 @@ Plugin archives are published on GitHub only; nothing is uploaded to galette.eu 
 | `attest` | No | `true` | Attach a signed build provenance attestation. |
 | `dry-run` | No | `false` | Build the archive and upload it as a workflow artifact, publish nothing. |
 | `token` | No | `${{ github.token }}` | Token used to publish the release. |
+| `mastodon-token` | No | `''` | Access token of the account the release is announced on. Empty announces nothing, and is not an error. |
+| `mastodon-instance` | No | `''` | Host of that account's instance, e.g. `framapiaf.org`. |
 
 ## Outputs
 
@@ -96,6 +98,36 @@ has another name needs `git branch -f develop HEAD` after the checkout, along wi
 
 To rehearse without touching tags, run the workflow manually with `dry-run: true`: the
 archive is uploaded as a workflow artifact and nothing is published.
+
+## Announcing the release
+
+When `mastodon-token` and `mastodon-instance` are both set, and only for the
+release that is `releases/latest`, the action announces the plugin through
+[`actions/toot`](../toot). The text is built from the name the plugin declares in
+its `_define.php` at the tag — "Galette Objects Lend", not
+"plugin-objectslend" — the version, and a link to the release.
+
+**The account announced to is the one the token belongs to.** For the official
+plugins that is the project's account: `MASTODON_TOKEN` and `MASTODON_INSTANCE`
+are organisation-level in `galette-plugins`, with the **Selected repositories**
+visibility. A plugin that is not on that list reads an empty string and announces
+nothing, without failing — `galette-plugins` also hosts community plugins, and
+an unrestricted secret would hand them the project's account.
+
+A community plugin announces on **its own** account by setting `MASTODON_TOKEN`
+and `MASTODON_INSTANCE` at the repository level; a repository secret wins over an
+organisation secret of the same name. The workflow is the same on both sides:
+
+```yaml
+      - uses: galette/.github/actions/release-plugin@main
+        with:
+          version: ${{ inputs.version || github.ref_name }}
+          mastodon-token: ${{ secrets.MASTODON_TOKEN }}
+          mastodon-instance: ${{ vars.MASTODON_INSTANCE }}
+```
+
+Nothing is announced in nightly mode: the rolling release notifies its watchers
+once, a toot a night would be noise.
 
 ## What it writes on the Pages branch
 
