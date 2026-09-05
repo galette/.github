@@ -1,0 +1,165 @@
+name: 'Toot'
+description: 'Publish a status on a Mastodon account'
+author: 'Galette Team'
+
+# This action knows no account. It posts where it is told, with the token it is
+# given, and neither has a default: a caller that forgot to wire one of them
+# publishes nothing, instead of publishing in the wrong place. That is the whole
+# safety model — see the README.
+
+inputs:
+  status:
+    description: 'Text to publish. Mastodon renders it as plain text; links are linkified.'
+    required: true
+  token:
+    description: 'Mastodon access token with the write:statuses scope. Empty means "do not publish", which is not an error.'
+    required: false
+    default: ''
+  instance:
+    description: 'Host of the Mastodon instance, for instance framapiaf.org. A https:// prefix is accepted and stripped.'
+    required: false
+    default: ''
+  visibility:
+    description: 'public, unlisted, private or direct'
+    required: false
+    default: 'public'
+  language:
+    description: 'ISO 639 code of the language the status is written in'
+    required: false
+    default: 'en'
+  idempotency-key:
+    description: 'Sent as the Idempotency-Key header so a re-run does not publish twice. Leave empty to disable.'
+    required: false
+    default: ''
+  dry-run:
+    description: 'Show the status and its length, publish nothing'
+    required: false
+    default: 'false'
+
+outputs:
+  posted:
+    description: '"true" when a status was actually published'
+    value: ${{ steps.post.outputs.posted }}
+  url:
+    description: 'URL of the published status, empty when nothing was published'
+    value: ${{ steps.post.outputs.url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Publish the status
+      id: post
+      shell: bash
+      env:
+        STATUS: ${{ inputs.status }}
+        TOKEN: ${{ inputs.token }}
+        INSTANCE: ${{ inputs.instance }}
+        VISIBILITY: ${{ inputs.visibility }}
+        LANGUAGE: ${{ inputs.language }}
+        IDEMPOTENCY_KEY: ${{ inputs.idempotency-key }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -uo pipefail
+
+        echo "posted=false" >> "$GITHUB_OUTPUT"
+        echo "url=" >> "$GITHUB_OUTPUT"
+
+        # An organisation secret restricted to selected repositories resolves to an
+        # empty string everywhere else. That is how the announcement is granted
+        # repository by repository, so a repository without it must pass quietly:
+        # failing here would take down the release of every plugin that is simply
+        # not allowed to announce.
+        if [ -z "${TOKEN}" ] || [ -z "${INSTANCE}" ]; then
+          echo "::notice::No Mastodon token or instance provided, nothing is published."
+          exit 0
+        fi
+
+        # Callers copy the value from wherever they keep it, and some of them keep
+        # a URL rather than a host.
+        host="${INSTANCE#http://}"
+        host="${host#https://}"
+        host="${host%%/*}"
+        if [ -z "$host" ]; then
+          echo "::error::'${INSTANCE}' is not a usable Mastodon host"
+          exit 1
+        fi
+
+        case "$VISIBILITY" in
+          public|unlisted|private|direct) ;;
+          *)
+            echo "::error::visibility must be public, unlisted, private or direct, got '${VISIBILITY}'"
+            exit 1
+            ;;
+        esac
+
+        if [ -z "${STATUS//[[:space:]]/}" ]; then
+          echo "::error::the status is empty, there is nothing to publish"
+          exit 1
+        fi
+
+        # Mastodon counts characters, not bytes, and counts every link as 23
+        # characters whatever its real length. Counting naively would reject a
+        # status the server would have accepted — release announcements are mostly
+        # links, so the difference is not marginal.
+        counted=$(printf '%s' "$STATUS" \
+          | sed -E "s|https?://[^[:space:]]+|$(printf '.%.0s' $(seq 23))|g" \
+          | wc -m)
+        if [ "$counted" -gt 500 ]; then
+          echo "::error::the status is ${counted} characters long, Mastodon accepts 500 (links count as 23 whatever their length)"
+          exit 1
+        fi
+
+        echo "Publishing to ${host} as ${VISIBILITY}, ${counted}/500 characters:"
+        printf '%s\n' "$STATUS" | sed 's/^/  | /'
+
+        if [ "$DRY_RUN" = "true" ]; then
+          echo "::notice::Dry run, nothing was published."
+          exit 0
+        fi
+
+        # JSON rather than a --form: a status starting with @ or < would make curl
+        # read a file of that name, and these texts do start with a plugin name.
+        payload=$(jq -n \
+          --arg status "$STATUS" \
+          --arg visibility "$VISIBILITY" \
+          --arg language "$LANGUAGE" \
+          '{status: $status, visibility: $visibility, language: $language}')
+
+        headers=(--header "Authorization: Bearer ${TOKEN}" --header 'Content-Type: application/json')
+        # Mastodon remembers the key for a while and returns the status it already
+        # created rather than creating a second one, so re-running a failed
+        # workflow does not announce twice.
+        if [ -n "${IDEMPOTENCY_KEY}" ]; then
+          headers+=(--header "Idempotency-Key: ${IDEMPOTENCY_KEY}")
+        fi
+
+        # Created up front: a connection that never reaches the instance leaves
+        # curl no body to write, and the error branch below reads this file.
+        body="${RUNNER_TEMP}/toot-response.json"
+        : > "$body"
+        code=$(curl --silent --show-error \
+          --request POST "https://${host}/api/v1/statuses" \
+          "${headers[@]}" \
+          --data-binary "$payload" \
+          --output "$body" \
+          --write-out '%{http_code}')
+
+        if [ "${code:-000}" -lt 200 ] || [ "${code:-000}" -ge 300 ]; then
+          # Mastodon answers {"error": "..."}; anything else (a proxy, an HTML error
+          # page) is shown raw rather than swallowed.
+          detail=$(jq -r '.error // empty' < "$body" 2>/dev/null)
+          [ -z "$detail" ] && detail=$(head -c 500 "$body")
+          echo "::error::Mastodon refused the status (HTTP ${code}): ${detail}"
+          echo "It may mean the token is invalid or lacks the write:statuses scope, or that ${host} is not the instance it belongs to."
+          exit 1
+        fi
+
+        url=$(jq -r '.url // empty' < "$body")
+        echo "posted=true" >> "$GITHUB_OUTPUT"
+        echo "url=${url}" >> "$GITHUB_OUTPUT"
+        echo "Published: ${url}"
+        {
+          echo "### Announced on Mastodon"
+          echo
+          echo "[${url}](${url})"
+        } >> "$GITHUB_STEP_SUMMARY"
