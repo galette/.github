@@ -129,6 +129,15 @@ runs:
       shell: bash
       run: python3 -m pip install --user --quiet --disable-pip-version-check GitPython termcolor
 
+    # MO files are not versioned: bin/release compiles them with msgfmt
+    - name: Gettext tools
+      shell: bash
+      run: |
+        if ! command -v msgfmt >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y gettext
+        fi
+
     # -l -d <dir> is what keeps the build off ssh.galette.eu: in local mode the
     # "does this release already exist?" check reads that directory and the
     # upload becomes a copy into it.

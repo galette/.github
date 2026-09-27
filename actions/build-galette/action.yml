@@ -103,6 +103,15 @@ runs:
           ${{ steps.set-paths.outputs.galette-path }}/galette/webroot/assets/
         key: "${{ runner.os }}-galette-${{ steps.semantic-hash.outputs.semantichash }}"
 
+    # MO files are not versioned: composer install compiles them with msgfmt
+    - name: Gettext tools
+      shell: bash
+      run: |
+        if ! command -v msgfmt >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y gettext
+        fi
+
     - name: Install Galette dependencies
       shell: bash
       working-directory: ${{ steps.set-paths.outputs.galette-path }}
