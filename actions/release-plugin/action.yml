@@ -315,8 +315,7 @@ runs:
           rank=''
         fi
 
-        # The Pages branch is not always gh-pages — stripe, legalnotices and
-        # helloasso publish from gh-pages-galette-theme — and the source may be a
+        # The Pages branch is not necessarily gh-pages and the source may be a
         # subdirectory, so both are read rather than assumed. Same discovery as
         # theme-ghpages' bin/rebuild-consumers.
         pages=$(gh api "repos/${REPO}/pages" 2>/dev/null)

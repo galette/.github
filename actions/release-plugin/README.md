@@ -155,7 +155,7 @@ Being the same repository, `github.token` is enough — no cross-repo secret. Wh
   page says, and writing every night would commit every night.
 - **Only when the value changes**, and only on a branch whose `_config.yml` references
   `galette/theme-ghpages`. The Pages branch is discovered through the API, never assumed: it
-  is `gh-pages-galette-theme` on three plugins, and may be a subdirectory.
+  is not necessarily `gh-pages`, and the source may be a subdirectory.
 - **Never fatal.** A protected branch, a race with Weblate on the same branch, no page at
   all — each one warns and leaves the page naming whatever it had. A published release is
   never failed over a documentation file.
