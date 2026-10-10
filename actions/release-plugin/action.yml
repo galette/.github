@@ -270,7 +270,9 @@ runs:
         TAG: ${{ inputs.version }}
         READER: ${{ github.action_path }}/read-define.php
       run: |
-        set -uo pipefail
+        # `shell: bash` already runs `bash -e`, and `set -u` does not undo it:
+        # without +e, the first failing $(...) below ends the step silently.
+        set +e -uo pipefail
 
         # Only ever the release the cartouche actually links. Step 4b of
         # MIGRATE_PLUGINS.md republishes the whole back catalogue with
@@ -427,7 +429,9 @@ runs:
         SERVER: ${{ github.server_url }}
         READER: ${{ github.action_path }}/read-define.php
       run: |
-        set -uo pipefail
+        # `shell: bash` already runs `bash -e`, and `set -u` does not undo it:
+        # without +e, the first failing $(...) below ends the step silently.
+        set +e -uo pipefail
         echo "announce=false" >> "$GITHUB_OUTPUT"
 
         latest=$(gh api "repos/${REPO}/releases/latest" --jq '.tag_name' 2>/dev/null)
