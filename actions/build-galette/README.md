@@ -26,12 +26,17 @@ This composite GitHub Action handles the installation and caching of Galette dep
 
 ## Usage Examples
 
+Versions of third-party actions below are only examples and may lag behind.
+Use the latest major release of each (see its *Releases* page, e.g.
+<https://github.com/actions/checkout/releases>), and let Dependabot keep them
+current with a `github-actions` entry in `.github/dependabot.yml`.
+
 ### For Galette Core (repo already checked out)
 
 ```yaml
 steps:
   - name: Checkout
-    uses: actions/checkout@v6
+    uses: actions/checkout@v7
 
   - name: Setup PHP
     uses: shivammathur/setup-php@v2
@@ -43,7 +48,7 @@ steps:
       ini-values: apc.enable_cli=1
 
   - name: Build Galette
-    uses: galette/.github/actions/build-galette
+    uses: galette/.github/actions/build-galette@main
     with:
       php-version: ${{ matrix.php-version }}
       enable-assets-cache: ${{ matrix.cache }}
@@ -62,19 +67,19 @@ steps:
       coverage: none
 
   - name: Checkout plugin
-    uses: actions/checkout@v6
+    uses: actions/checkout@v7
     with:
       path: plugin-source
 
   - name: Build Galette
     id: build
-    uses: galette/.github/actions/build-galette
+    uses: galette/.github/actions/build-galette@main
     with:
       php-version: ${{ matrix.php-version }}
       galette-ref: develop
 
   - name: Checkout plugin
-    uses: actions/checkout@v6
+    uses: actions/checkout@v7
     with:
       path: galette-core/galette/plugins/plugin-name
 
