@@ -1,0 +1,188 @@
+name: Plugin E2E tests
+
+# Run the Playwright specs of a plugin against Galette core, the way core runs
+# its own (see galette/galette .github/workflows/e2e.yml): PostgreSQL, Mailpit,
+# a freshly installed database with the E2E fixtures, the built-in PHP server.
+#
+# The plugin brings its specs in tests/e2e/specs/; core playwright.config.ts
+# runs them in its plugins-chromium project. Anything only the plugin needs
+# before the fixtures are seeded (keys, configuration files...) goes in an
+# executable tests/e2e/setup.sh, run from the plugin directory.
+
+on:
+  workflow_call:
+    inputs:
+      plugin:
+        description: 'Plugin directory name (defaults to the repository name)'
+        type: string
+        required: false
+        default: ''
+      galette-ref:
+        description: 'Galette core branch or tag to test against'
+        type: string
+        required: false
+        default: 'develop'
+      php-version:
+        description: 'PHP version'
+        type: string
+        required: false
+        default: '8.5'
+      check-url:
+        description: 'Path that must not answer 404 once the server is up, to fail early when the plugin is not loaded'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    name: Playwright (postgres:17)
+    env:
+      DB: pgsql
+      GALETTE_TESTS: 1
+      PLUGIN: ${{ inputs.plugin || github.event.repository.name }}
+      E2E_BASE_URL: http://127.0.0.1:8090
+      E2E_ADMIN_USER: admin
+      E2E_ADMIN_PASS: admin
+      E2E_MAILPIT_URL: http://127.0.0.1:8025
+
+    services:
+      db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: galette_tests
+          POSTGRES_PASSWORD: g@l3tte
+          POSTGRES_DB: galette_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      # Local SMTP catcher: captures mail without ever delivering it
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: galette-core
+
+    steps:
+      - name: PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          tools: composer, pecl
+          coverage: none
+          extensions: apcu, pdo_pgsql
+          ini-values: apc.enable_cli=1
+
+      - name: Build Galette
+        uses: galette/.github/actions/build-galette@main
+        with:
+          php-version: ${{ inputs.php-version }}
+          galette-ref: ${{ inputs.galette-ref }}
+          enable-assets-cache: true
+
+      - name: Checkout plugin
+        uses: actions/checkout@v7
+        with:
+          path: galette-core/galette/plugins/${{ env.PLUGIN }}
+
+      # Every step below finds the plugin there, console commands included
+      - name: Plugins path
+        run: echo "GALETTE_PLUGINS_PATH=$(pwd)/galette/plugins" >> "$GITHUB_ENV"
+
+      - name: Plugin dependencies
+        working-directory: galette-core/galette/plugins/${{ env.PLUGIN }}
+        run: |
+          if [ -f composer.json ]; then
+            composer install --ignore-platform-reqs --no-progress
+          fi
+          # plugin pages may not work without their scripts
+          if [ -f package.json ] && jq -e '.scripts.build' package.json > /dev/null; then
+            npm ci --no-audit --no-fund
+            npm run build
+          fi
+
+      # MO files are not versioned; test mode would boot on a database not installed yet
+      - name: Compile locales
+        run: GALETTE_TESTS= bin/console galette:compile-locales
+
+      - name: Initialize test data
+        run: php tests/init_test_data.php
+
+      - name: Install Galette
+        run: |
+          bin/console galette:install -v \
+            --dbtype=pgsql \
+            --dbhost=localhost \
+            --dbport=5432 \
+            --dbname=galette_tests \
+            --dbuser=galette_tests \
+            --dbpass=g@l3tte \
+            --admin="$E2E_ADMIN_USER" \
+            --password="$E2E_ADMIN_PASS" \
+            --no-interaction
+          bin/console galette:plugins:install-db --all
+          bin/console galette:plugins:list
+
+      - name: Plugin setup
+        working-directory: galette-core/galette/plugins/${{ env.PLUGIN }}
+        run: |
+          if [ -f tests/e2e/setup.sh ]; then
+            GALETTE_PATH="$GITHUB_WORKSPACE/galette-core" bash tests/e2e/setup.sh
+          fi
+
+      # Seeds the fixtures of the plugin too, from its Fixtures class
+      - name: Seed E2E fixtures
+        run: bin/console galette:seed-fixtures -v
+
+      - name: Start PHP built-in server
+        env:
+          CHECK_URL: ${{ inputs.check-url }}
+        run: |
+          php -S 0.0.0.0:8090 -t galette/webroot tests/router_e2e.php > tests/tests-data/php-server.log 2>&1 &
+          timeout 15 bash -c 'until curl -sf "$E2E_BASE_URL/login" > /dev/null; do sleep 1; done'
+          if [ -n "$CHECK_URL" ]; then
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$E2E_BASE_URL$CHECK_URL")
+            if [ "$CODE" = "404" ]; then
+              echo "::error::$CHECK_URL answered 404: the plugin is not loaded"
+              exit 1
+            fi
+          fi
+          echo "PHP server started"
+
+      - name: Wait for Mailpit
+        run: timeout 30 bash -c 'until curl -sf "$E2E_MAILPIT_URL/readyz" > /dev/null; do sleep 1; done'
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npx playwright test --project plugins-chromium
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-${{ env.PLUGIN }}
+          path: galette-core/playwright-report/
+          retention-days: 7
+
+      - name: Upload test data (logs, photos, etc.)
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-data-e2e-${{ env.PLUGIN }}
+          path: |
+            galette-core/tests/tests-data/
+            galette-core/galette/data/logs/
+          retention-days: 7
+          if-no-files-found: ignore
