@@ -2,8 +2,10 @@ version: 2
 updates:
   # Keep GitHub Actions up-to-date
   - package-ecosystem: "github-actions"
-    # composite actions are only scanned in their own directory
+    # composite actions are only scanned in their own directory;
+    # "/" stands for the reusable workflows of .github/workflows
     directories:
+      - "/"
       - "/actions/*"
     schedule:
       interval: "weekly"
