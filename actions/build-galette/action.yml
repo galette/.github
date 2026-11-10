@@ -51,6 +51,7 @@ runs:
         path: galette-core
         fetch-depth: 1
         ref: ${{ steps.set-paths.outputs.galette-ref }}
+        persist-credentials: false
 
     - name: Show versions
       shell: bash
