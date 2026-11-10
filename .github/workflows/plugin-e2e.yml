@@ -37,6 +37,10 @@ jobs:
   playwright:
     runs-on: ubuntu-latest
     name: Playwright (postgres:17)
+    # The plugin setup script, npm scripts and specs are code of the tested
+    # branch: they get a read-only token
+    permissions:
+      contents: read
     env:
       DB: pgsql
       GALETTE_TESTS: 1
@@ -94,6 +98,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: galette-core/galette/plugins/${{ env.PLUGIN }}
+          persist-credentials: false
 
       # Every step below finds the plugin there, console commands included
       - name: Plugins path
