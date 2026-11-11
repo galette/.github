@@ -21,6 +21,8 @@ the plugin database, the E2E fixtures (core ones and the plugin `Fixtures` class
 ```yaml
 jobs:
   e2e:
+    permissions:
+      contents: read
     uses: galette/.github/.github/workflows/plugin-e2e.yml@main
     with:
       galette-ref: master
@@ -32,6 +34,9 @@ jobs:
 | `galette-ref` | `develop` | Galette core branch or tag to test against |
 | `php-version` | `8.5` | PHP version |
 | `check-url` | | Path that must not answer 404 once the server is up |
+
+The calling job sets the token permissions: the workflow runs code of the tested branch
+and needs nothing more than reading the repository.
 
 What the plugin provides:
 
