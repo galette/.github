@@ -33,7 +33,8 @@ secret wins over an organisation secret of the same name, so the two cases canno
 contaminate each other.
 
 Create the token in Mastodon under Preferences → Development → New application,
-with the **`write:statuses`** scope and nothing else.
+with the **`write:statuses`** scope, plus **`write:media`** if the workflow
+attaches an image, and nothing else.
 
 ## Inputs
 
@@ -44,6 +45,8 @@ with the **`write:statuses`** scope and nothing else.
 | `instance` | `''` | Host, e.g. `framapiaf.org`. A `https://` prefix is stripped. Empty behaves like an empty token. |
 | `visibility` | `public` | `public`, `unlisted`, `private` or `direct`. |
 | `language` | `en` | ISO 639 code. |
+| `media` | `''` | Path to an image to attach. Empty means a text-only status. |
+| `media-description` | `''` | Alternative text of the image, required with `media`, 1500 characters at most. |
 | `idempotency-key` | `''` | Sent as `Idempotency-Key`. Mastodon returns the existing status instead of creating a second one, so re-running a workflow does not announce twice. Worth setting. |
 | `dry-run` | `false` | Prints the status and its length, publishes nothing. |
 
@@ -55,3 +58,14 @@ Mastodon accepts 500 characters, counts characters rather than bytes, and counts
 **every link as 23 characters** whatever its real length. The action applies the
 same rule before posting, so it does not reject a status the server would have
 accepted — release announcements are mostly links, and the difference is large.
+
+## Image
+
+`media` attaches one image, described by `media-description` for whoever cannot
+see it: an image without its alternative text is refused before anything is
+published, like any other wrong input.
+
+The image is a bonus, the status is the announcement. If the upload fails (token
+without `write:media`, file too large, a type the instance does not take), the
+action warns and publishes the status without it. Mastodon processes some images
+asynchronously; the action waits up to a minute for it to be ready.

@@ -27,6 +27,14 @@ inputs:
     description: 'ISO 639 code of the language the status is written in'
     required: false
     default: 'en'
+  media:
+    description: 'Path to an image to attach. Needs the write:media scope as well. Empty means a text-only status.'
+    required: false
+    default: ''
+  media-description:
+    description: 'Alternative text of the image, required along with media: it is what a screen reader says instead of showing it.'
+    required: false
+    default: ''
   idempotency-key:
     description: 'Sent as the Idempotency-Key header so a re-run does not publish twice. Leave empty to disable.'
     required: false
@@ -57,6 +65,8 @@ runs:
         VISIBILITY: ${{ inputs.visibility }}
         LANGUAGE: ${{ inputs.language }}
         IDEMPOTENCY_KEY: ${{ inputs.idempotency-key }}
+        MEDIA: ${{ inputs.media }}
+        MEDIA_DESCRIPTION: ${{ inputs.media-description }}
         DRY_RUN: ${{ inputs.dry-run }}
       run: |
         set -uo pipefail
@@ -109,12 +119,76 @@ runs:
           exit 1
         fi
 
+        # A wrong media input is a mistake in the caller, caught before anything
+        # is published, like a wrong visibility. Without an alternative text the
+        # image would say nothing to whoever cannot see it.
+        if [ -n "$MEDIA" ]; then
+          if [ ! -f "$MEDIA" ]; then
+            echo "::error::media '${MEDIA}' is not a file"
+            exit 1
+          fi
+          if [ -z "${MEDIA_DESCRIPTION//[[:space:]]/}" ]; then
+            echo "::error::media is set but media-description is empty: an image needs its alternative text"
+            exit 1
+          fi
+          described=$(printf '%s' "$MEDIA_DESCRIPTION" | wc -m)
+          if [ "$described" -gt 1500 ]; then
+            echo "::error::media-description is ${described} characters long, Mastodon accepts 1500"
+            exit 1
+          fi
+        fi
+
         echo "Publishing to ${host} as ${VISIBILITY}, ${counted}/500 characters:"
         printf '%s\n' "$STATUS" | sed 's/^/  | /'
+        if [ -n "$MEDIA" ]; then
+          echo "With ${MEDIA}, described as:"
+          printf '%s\n' "$MEDIA_DESCRIPTION" | sed 's/^/  | /'
+        fi
 
         if [ "$DRY_RUN" = "true" ]; then
           echo "::notice::Dry run, nothing was published."
           exit 0
+        fi
+
+        # The image is a bonus, the status is the announcement: an upload that
+        # fails costs the image, never the status.
+        media_ids='[]'
+        if [ -n "$MEDIA" ]; then
+          media_body="${RUNNER_TEMP}/toot-media.json"
+          : > "$media_body"
+          # --form-string for the description: like the status, it may start
+          # with @ or <, which --form would read as a file.
+          media_code=$(curl --silent --show-error \
+            --request POST "https://${host}/api/v2/media" \
+            --header "Authorization: Bearer ${TOKEN}" \
+            --form "file=@${MEDIA}" \
+            --form-string "description=${MEDIA_DESCRIPTION}" \
+            --output "$media_body" \
+            --write-out '%{http_code}')
+          media_id=$(jq -r '.id // empty' < "$media_body" 2>/dev/null)
+
+          # 200: ready. 202: still being processed, and Mastodon refuses to attach
+          # it until it is — GET answers 206 meanwhile, 200 once done.
+          if [ "${media_code:-000}" = "202" ] && [ -n "$media_id" ]; then
+            for _ in $(seq 30); do
+              sleep 2
+              media_code=$(curl --silent --show-error \
+                --header "Authorization: Bearer ${TOKEN}" \
+                --output "$media_body" \
+                --write-out '%{http_code}' \
+                "https://${host}/api/v1/media/${media_id}")
+              [ "$media_code" != "206" ] && break
+            done
+          fi
+
+          if [ "${media_code:-000}" = "200" ] && [ -n "$media_id" ]; then
+            media_ids=$(jq -nc --arg id "$media_id" '[$id]')
+            echo "Image uploaded as media ${media_id}."
+          else
+            detail=$(jq -r '.error // empty' < "$media_body" 2>/dev/null)
+            [ -z "$detail" ] && detail=$(head -c 500 "$media_body")
+            echo "::warning::the image could not be attached (HTTP ${media_code:-000}): ${detail}. The status is published without it. It may mean the token lacks the write:media scope, or that the file is too large or of a type ${host} does not take."
+          fi
         fi
 
         # JSON rather than a --form: a status starting with @ or < would make curl
@@ -123,7 +197,9 @@ runs:
           --arg status "$STATUS" \
           --arg visibility "$VISIBILITY" \
           --arg language "$LANGUAGE" \
-          '{status: $status, visibility: $visibility, language: $language}')
+          --argjson media_ids "$media_ids" \
+          '{status: $status, visibility: $visibility, language: $language}
+           + (if ($media_ids | length) > 0 then {media_ids: $media_ids} else {} end)')
 
         headers=(--header "Authorization: Bearer ${TOKEN}" --header 'Content-Type: application/json')
         # Mastodon remembers the key for a while and returns the status it already
